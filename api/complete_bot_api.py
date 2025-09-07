@@ -40,10 +40,13 @@ def get_error_from_output(stdout_str: str, stderr_str: str, return_code: int) ->
     
     # Common error patterns and their user-friendly messages
     error_patterns = [
-        {"pattern": "API Key permission denied", "message": "API Key permission denied - check IP restrictions or API key permissions"},
-        {"pattern": "currency pair nonsupport", "message": "Trading pair not supported by the exchange"},
-        {"pattern": "Bot encountered an error", "message": "Bot runtime error"},
-        {"pattern": "Invalid response format from API", "message": "Invalid API response"},
+        {"pattern": "API Key permission denied", "message": "API Key permission denied - check IP restrictions and API key permissions"},
+        {"pattern": "Invalid IP or permissions", "message": "API Key permission denied - check IP restrictions and API key permissions"},
+        {"pattern": "currency pair nonsupport", "message": "Trading pair not supported by the exchange - check if HVT_USDT is available on LBank"},
+        {"pattern": "No such file or directory: 'py'", "message": "Python executable not found - install Python or check PATH"},
+        {"pattern": "Bot encountered an error", "message": None},  # Will use the actual error message
+        {"pattern": "Invalid response format from API", "message": "Invalid API response - check API credentials"},
+        {"pattern": "KeyError: 'data'", "message": "API response format error - the exchange returned unexpected data format"},
         {"pattern": "Error:", "message": None},  # Will use the actual error message
         {"pattern": "Failed to start bot:", "message": None}  # Will use the actual error message
     ]
@@ -61,7 +64,9 @@ def get_error_from_output(stdout_str: str, stderr_str: str, return_code: int) ->
     api_errors = []
     if stdout_str:
         for line in stdout_str.split('\n'):
-            if "Invalid response format from API" in line or "API Key" in line or "error_code" in line:
+            if ("Invalid response format from API" in line or "API Key" in line or 
+                "error_code" in line or "permission denied" in line or 
+                "currency pair nonsupport" in line):
                 api_errors.append(line.strip())
     
     if api_errors:
@@ -72,7 +77,8 @@ def get_error_from_output(stdout_str: str, stderr_str: str, return_code: int) ->
         for line in stdout_str.split('\n'):
             if ('error' in line.lower() or 'failed' in line.lower() or 
                 'exception' in line.lower() or 'traceback' in line.lower() or 
-                'nonsupport' in line.lower() or 'denied' in line.lower()):
+                'nonsupport' in line.lower() or 'denied' in line.lower() or
+                'keyerror' in line.lower()):
                 error_lines.append(line.strip())
     
     if stderr_str:
@@ -377,14 +383,18 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
 
 def create_bot_config(bot_data: dict) -> str:
     """Create configuration file for the bot"""
+    # Get the absolute path to the bot directory
+    bot_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(bot_dir)
+    
     # Use the new config directory structure
-    config_dir = "config/bot_configs"
+    config_dir = os.path.join(parent_dir, "config", "bot_configs")
     os.makedirs(config_dir, exist_ok=True)
     
     config_path = os.path.join(config_dir, f'bot_{bot_data["id"]}.ini')
     
     # Check if there's an old config in the legacy location
-    old_config_dir = "configs"
+    old_config_dir = os.path.join(parent_dir, "configs")
     old_config_path = os.path.join(old_config_dir, f'bot_{bot_data["id"]}.ini')
     
     # Clean up old config if it exists
@@ -449,16 +459,20 @@ def start_bot_process(bot_data: dict) -> tuple[Optional[str], Optional[str]]:
         # Create configuration file for the bot
         config_path = create_bot_config(bot_data)
         
-        # Verify the bot runner script exists
-        bot_runner_path = "bot_runner.py"
+        # Get the absolute path to the bot directory
+        bot_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(bot_dir)
+        
+        # Verify the bot runner script exists (use absolute path)
+        bot_runner_path = os.path.join(parent_dir, "bot_runner.py")
         if not os.path.exists(bot_runner_path):
             error_msg = f"Bot runner script not found: {bot_runner_path}"
             print(f"{error_msg}")
             return None, error_msg
         
-        # Create a log file for the bot's output
+        # Create a log file for the bot's output (in the parent directory)
         bot_id_short = bot_data["id"].split("-")[0]
-        log_dir = "logs"
+        log_dir = os.path.join(parent_dir, "logs")
         os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, f"bot_{bot_id_short}.log")
         
@@ -469,12 +483,36 @@ def start_bot_process(bot_data: dict) -> tuple[Optional[str], Optional[str]]:
             log_file.write(f"Time: {datetime.utcnow().isoformat()}\n")
             log_file.write("-" * 60 + "\n\n")
         
+        # Determine the best Python executable to use
+        python_executables = ['py', 'python', 'python3']
+        python_cmd = None
+        
+        for cmd in python_executables:
+            try:
+                # Test if the command exists and works
+                result = subprocess.run([cmd, '--version'], 
+                                      capture_output=True, 
+                                      text=True, 
+                                      timeout=5)
+                if result.returncode == 0:
+                    python_cmd = cmd
+                    print(f"Using Python executable: {cmd}")
+                    break
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                continue
+        
+        if not python_cmd:
+            error_msg = "No suitable Python executable found (tried: py, python, python3)"
+            print(error_msg)
+            return None, error_msg
+        
         # Start the actual bot process using the bot runner
         process = subprocess.Popen([
-            'py', bot_runner_path, config_path
+            python_cmd, bot_runner_path, config_path
         ], 
         stdout=subprocess.PIPE, 
         stderr=subprocess.PIPE,
+        cwd=parent_dir,  # Set working directory to the bot project root
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
         )
         

@@ -8,6 +8,7 @@ import sys
 import os
 import subprocess
 from pathlib import Path
+VENV_PYTHON = sys.executable
 
 def main():
     """Main entry point for HarvestBot"""
