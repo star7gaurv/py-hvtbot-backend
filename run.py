@@ -29,26 +29,26 @@ def main():
             print("   - React Frontend Integration")
             print("   - Port: 5001")
             print()
-            subprocess.run([sys.executable, "scripts/start_complete_api.py"])
+            subprocess.run([VENV_PYTHON, "scripts/start_complete_api.py"])
             
         elif command == "auth":
             print("🔐 Starting Authentication API Only...")
             print("   - Basic Auth Endpoints")
             print("   - Port: 8000")
             print()
-            subprocess.run([sys.executable, "scripts/start_auth_api.py"])
+            subprocess.run([VENV_PYTHON, "scripts/start_auth_api.py"])
             
         elif command == "gui":
             print("Starting Desktop GUI...")
             print("   - Tkinter Interface")
             print("   - Local Bot Management")
             print()
-            subprocess.run([sys.executable, "GUI.py"])
+            subprocess.run([VENV_PYTHON, "GUI.py"])
             
         elif command == "monitor":
             print("📊 Running System Activity Check...")
             print()
-            subprocess.run([sys.executable, "monitoring/show_bot_activity.py"])
+            subprocess.run([VENV_PYTHON, "monitoring/show_bot_activity.py"])
             
         elif command == "help" or command == "-h" or command == "--help":
             show_help()
@@ -66,7 +66,7 @@ def main():
         print()
         print("Use 'py run.py help' for other options")
         print()
-        subprocess.run([sys.executable, "scripts/start_complete_api.py"])
+        subprocess.run([VENV_PYTHON, "scripts/start_complete_api.py"])
 
 def show_help():
     """Show available commands"""
@@ -111,13 +111,13 @@ def show_menu():
         
         if choice == "" or choice == "0":
             print("\nContinuing with Complete API Server...")
-            subprocess.run([sys.executable, "scripts/start_complete_api.py"])
+            subprocess.run([VENV_PYTHON, "scripts/start_complete_api.py"])
         elif choice == "1":
             print("\nStarting Desktop GUI...")
-            subprocess.run([sys.executable, "GUI.py"])
+            subprocess.run([VENV_PYTHON, "GUI.py"])
         elif choice == "2":
             print("\n📊 Checking System Activity...")
-            subprocess.run([sys.executable, "monitoring/show_bot_activity.py"])
+            subprocess.run([VENV_PYTHON, "monitoring/show_bot_activity.py"])
         elif choice == "3":
             show_help()
         elif choice == "4":
@@ -125,7 +125,7 @@ def show_menu():
             sys.exit(0)
         else:
             print("Invalid choice. Starting API server by default...")
-            subprocess.run([sys.executable, "scripts/start_complete_api.py"])
+            subprocess.run([VENV_PYTHON, "scripts/start_complete_api.py"])
             
     except KeyboardInterrupt:
         print("\n\n👋 Goodbye!")
@@ -133,7 +133,7 @@ def show_menu():
     except Exception as e:
         print(f"Error: {e}")
         print("Starting API server by default...")
-        subprocess.run([sys.executable, "scripts/start_complete_api.py"])
+        subprocess.run([VENV_PYTHON, "scripts/start_complete_api.py"])
 
 if __name__ == "__main__":
     main()
