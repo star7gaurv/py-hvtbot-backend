@@ -6,7 +6,7 @@ import LBank.new_v2_inter.OrderMan as om
 import math, random, time, sched, datetime, pprint, json
 
 class VolumeBot:
-    def __init__(self, _min_time, _max_time, _wallet_percentage, _min_spread, _max_spread, _pause_volume, _buy_sell_ratio, _apikey1, _secretkey1, _apikey2, _secretkey2, _trading_pair='mcoin') -> None:
+    def __init__(self, _min_time, _max_time, _wallet_percentage, _min_spread, _max_spread, _pause_volume, _buy_sell_ratio, _apikey1, _secretkey1, _apikey2, _secretkey2, _trading_pair='') -> None:
         self.min_time = _min_time
         self.max_time = _max_time
         self.wallet_percentage = _wallet_percentage/100
@@ -176,6 +176,33 @@ class VolumeBot:
 
         data = self.marketMan.getKline(symbol=self.trading_pair, size=20, type='day1', time=round(time.time()))
         print("Kline data:", data)
+        
+        # Check if API response is valid
+        if not isinstance(data, dict):
+            print(f"Invalid API response format: {data}")
+            scheduler.enter(self.random_waittime_gen(), 1, self.place_order, (scheduler,))
+            return
+            
+        # Check for API errors
+        if data.get('result') == 'false':
+            error_msg = data.get('msg', 'Unknown API error')
+            error_code = data.get('error_code', 'Unknown')
+            print(f"API Error: {error_msg} (Code: {error_code})")
+            scheduler.enter(self.random_waittime_gen(), 1, self.place_order, (scheduler,))
+            return
+            
+        # Check if data structure is as expected
+        if 'data' not in data or not data['data'] or len(data['data']) == 0:
+            print("No kline data available")
+            scheduler.enter(self.random_waittime_gen(), 1, self.place_order, (scheduler,))
+            return
+            
+        # Check if the data array has enough elements
+        if len(data['data'][0]) < 6:
+            print("Incomplete kline data structure")
+            scheduler.enter(self.random_waittime_gen(), 1, self.place_order, (scheduler,))
+            return
+            
         if data['data'][0][5] > self.pause_volume:
             print("Today's volume exceeded pause volume")
             scheduler.enter(self.random_waittime_gen(), 1, self.place_order, (scheduler,))
