@@ -9,7 +9,6 @@ class AccountMan:
         self.excuReq = APIV2Excu(_api_key, _secret_key)
 
     def getUserInfo(self,**d):
-
         str = self.getUserInfo.__name__
 
         par = {}

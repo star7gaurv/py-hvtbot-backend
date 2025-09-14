@@ -77,34 +77,34 @@ class VolumeBot:
                         f.write(f"{i:3d}. {symbol:<15} | Qty Acc: {qty_acc:<5} | Price Acc: {price_acc:<5} | Min Trade: {min_tran}\n")
                         
                         # Highlight HLPR-related symbols
-                        if 'hlpr' in symbol.lower():
-                            f.write(f"     *** HLPR MATCH FOUND: {symbol} ***\n")
+                        if 'hvt' in symbol.lower():
+                            f.write(f"     *** HVT MATCH FOUND: {symbol} ***\n")
                 else:
                     f.write("No trading pairs data available or invalid format\n")
                 
                 f.write("\n" + "="*60 + "\n")
-                f.write("Search Results for HLPR:\n")
+                f.write("Search Results for HVT:\n")
                 f.write("-"*40 + "\n")
                 
                 if data and 'data' in data and isinstance(data['data'], list):
-                    hlpr_found = False
+                    hvt_found = False
                     for symbol_info in data['data']:
                         symbol = symbol_info.get('symbol', '')
-                        if 'hlpr' in symbol.lower():
+                        if 'hvt' in symbol.lower():
                             f.write(f"FOUND: {symbol}\n")
                             f.write(f"  - Quantity Accuracy: {symbol_info.get('quantityAccuracy', 'N/A')}\n")
                             f.write(f"  - Price Accuracy: {symbol_info.get('priceAccuracy', 'N/A')}\n")
                             f.write(f"  - Min Transaction: {symbol_info.get('minTranQua', 'N/A')}\n\n")
-                            hlpr_found = True
-                    
-                    if not hlpr_found:
-                        f.write("No HLPR-related symbols found in the response\n")
-                        
+                            hvt_found = True
+
+                    if not hvt_found:
+                        f.write("No HVT-related symbols found in the response\n")
+
                         # Try to find similar symbols
                         f.write("\nSimilar symbols that might be related:\n")
                         for symbol_info in data['data']:
                             symbol = symbol_info.get('symbol', '')
-                            if any(char in symbol.lower() for char in ['hlp', 'lpr', 'helper']):
+                            if any(char in symbol.lower() for char in ['hvt', 'lpr', 'helper']):
                                 f.write(f"Similar: {symbol}\n")
                 else:
                     f.write("No data to search through\n")
@@ -120,7 +120,8 @@ class VolumeBot:
         self.quantity_accuracy = 2.0  # Default to 2 decimal places
         self.price_accuracy = 4.0     # Default to 4 decimal places
         self.min_transaction_quantity = 0.01  # Default minimum transaction
-        
+        self.trading_pair = 'hvt_usdt'  # Default trading pair
+
         found_symbol = False
         try:
             if 'data' in data and data['data']:
