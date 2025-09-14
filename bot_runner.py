@@ -72,7 +72,7 @@ def main():
         secret_key2 = config.get('DEFAULT', 'secret_key2', fallback='')
         
         # Extract trading parameters
-        symbol = config.get('TRADING', 'symbol', fallback='mcoin_usdt')
+        symbol = config.get('TRADING', 'symbol', fallback='hvt_usdt')
         network = config.get('TRADING', 'network', fallback='LBank')
         exchange_type = config.get('TRADING', 'exchange_type', fallback='CEX')
         min_time = config.getint('TRADING', 'min_time', fallback=60)
