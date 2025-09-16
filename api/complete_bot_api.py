@@ -28,6 +28,100 @@ import psutil
 import configparser
 import time
 
+#########################
+# Memory sync utilities #
+#########################
+
+def upsert_memory_for_bot(
+    *,
+    bot_id: str,
+    user_id: str,
+    name: str,
+    network: str,
+    symbol: str,
+    exchange_type: str,
+    min_time: int,
+    max_time: int,
+    min_spread: float,
+    max_spread: float,
+    buy_ratio: float,
+    wallet_percentage: int,
+    pause_volume: int,
+    exchange_type_value: Optional[str] = None,
+) -> None:
+    """Create or update a memory entry mirroring the bot config (1:1 using bot_id).
+
+    If a memory with id==bot_id exists, it's updated; otherwise it's inserted.
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM bot_memories WHERE id = ? AND user_id = ?",
+            (bot_id, user_id),
+        )
+        exists = cur.fetchone() is not None
+
+        if exists:
+            cur.execute(
+                """
+                UPDATE bot_memories
+                SET name = ?, network = ?, symbol = ?, exchange_type = ?,
+                    min_time = ?, max_time = ?, min_spread = ?, max_spread = ?,
+                    buy_ratio = ?, wallet_percentage = ?, pause_volume = ?,
+                    exchange_type_value = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (
+                    name,
+                    network,
+                    symbol,
+                    exchange_type,
+                    min_time,
+                    max_time,
+                    min_spread,
+                    max_spread,
+                    buy_ratio,
+                    wallet_percentage,
+                    pause_volume,
+                    exchange_type_value,
+                    bot_id,
+                    user_id,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO bot_memories (
+                    id, user_id, name, network, symbol, exchange_type,
+                    min_time, max_time, min_spread, max_spread, buy_ratio,
+                    wallet_percentage, pause_volume, exchange_type_value, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    bot_id,
+                    user_id,
+                    name,
+                    network,
+                    symbol,
+                    exchange_type,
+                    min_time,
+                    max_time,
+                    min_spread,
+                    max_spread,
+                    buy_ratio,
+                    wallet_percentage,
+                    pause_volume,
+                    exchange_type_value,
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        # Non-fatal for main flows; just log
+        print(f"upsert_memory_for_bot failed for bot {bot_id}: {e}")
+
 # Configuration
 SECRET_KEY = "harvestbot-secret-key-change-in-production"
 ALGORITHM = "HS256"
@@ -924,6 +1018,24 @@ async def create_bot(bot_data: BotCreate, current_user: dict = Depends(get_curre
         
         conn.commit()
         conn.close()
+
+        # Create or update a memory snapshot for this bot (1:1 by id)
+        upsert_memory_for_bot(
+            bot_id=bot_id,
+            user_id=current_user['id'],
+            name=bot_data.name,
+            network=bot_data.network,
+            symbol=bot_data.symbol,
+            exchange_type=bot_data.exchangeType,
+            min_time=bot_data.minTime,
+            max_time=bot_data.maxTime,
+            min_spread=bot_data.minSpread,
+            max_spread=bot_data.maxSpread,
+            buy_ratio=bot_data.buyRatio,
+            wallet_percentage=bot_data.walletPercentage,
+            pause_volume=bot_data.pauseVolume,
+            exchange_type_value=bot_data.exchangeTypeValue,
+        )
         
         # Try to start the bot immediately after creation
         initial_status = "inactive"
@@ -1298,6 +1410,27 @@ async def update_bot_status(bot_id: str, status_data: BotStatusUpdate, current_u
         error_message = None
         
         if status_data.status == "active" and old_status != "active":
+            # Ensure memory snapshot is up to date before starting
+            try:
+                upsert_memory_for_bot(
+                    bot_id=bot[0],
+                    user_id=current_user['id'],
+                    name=bot[1],
+                    network=bot[3],
+                    symbol=bot[2],
+                    exchange_type=bot[4],
+                    min_time=bot[6],
+                    max_time=bot[7],
+                    min_spread=bot[8],
+                    max_spread=bot[9],
+                    buy_ratio=bot[10],
+                    wallet_percentage=bot[11],
+                    pause_volume=bot[12],
+                    exchange_type_value=bot[5],
+                )
+            except Exception as e:
+                print(f"Failed to upsert memory before status start for bot {bot_id}: {e}")
+
             # Start the bot process
             bot_data = {
                 'id': bot[0], 'name': bot[1], 'symbol': bot[2], 'network': bot[3],
@@ -1482,7 +1615,7 @@ async def update_bot(bot_id: str, bot_data: BotUpdate, current_user: dict = Depe
         conn.commit()
         conn.close()
         
-        return BotResponse(
+        response_obj = BotResponse(
             id=bot[0],
             name=bot[1],
             symbol=bot[2],
@@ -1500,6 +1633,29 @@ async def update_bot(bot_id: str, bot_data: BotUpdate, current_user: dict = Depe
             createdAt=datetime.fromisoformat(bot[14]) if bot[14] else datetime.utcnow(),
             updatedAt=datetime.fromisoformat(bot[15]) if bot[15] else datetime.utcnow()
         )
+
+        # Upsert memory snapshot to reflect latest configuration
+        try:
+            upsert_memory_for_bot(
+                bot_id=bot[0],
+                user_id=current_user['id'],
+                name=bot[1],
+                network=bot[3],
+                symbol=bot[2],
+                exchange_type=bot[4],
+                min_time=bot[6],
+                max_time=bot[7],
+                min_spread=bot[8],
+                max_spread=bot[9],
+                buy_ratio=bot[10],
+                wallet_percentage=bot[11],
+                pause_volume=bot[12],
+                exchange_type_value=bot[5],
+            )
+        except Exception as e:
+            print(f"Failed to upsert memory during update for bot {bot_id}: {e}")
+
+        return response_obj
         
     except HTTPException:
         raise
@@ -1601,6 +1757,27 @@ async def start_bot(bot_id: str, current_user: dict = Depends(get_current_user))
         # Clean up any old configs in wrong location
         cleanup_bot_config(bot_id)
         
+        # Ensure a memory snapshot exists/updated before starting
+        try:
+            upsert_memory_for_bot(
+                bot_id=bot[0],
+                user_id=current_user['id'],
+                name=bot[1],
+                network=bot[3],
+                symbol=bot[2],
+                exchange_type=bot[4],
+                min_time=bot[6],
+                max_time=bot[7],
+                min_spread=bot[8],
+                max_spread=bot[9],
+                buy_ratio=bot[10],
+                wallet_percentage=bot[11],
+                pause_volume=bot[12],
+                exchange_type_value=bot[5],
+            )
+        except Exception as e:
+            print(f"Failed to upsert memory before starting bot {bot_id}: {e}")
+
         # Start the bot process
         new_process_id, error_message = start_bot_process(bot_data)
         
