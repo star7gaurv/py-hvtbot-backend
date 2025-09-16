@@ -183,3 +183,5 @@ test_*.py
 # Windows specific
 *.exe
 *.bat
+
+lbank_accuracy_data.txt
