@@ -12,7 +12,8 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import jwt
 import hashlib
-import sqlite3
+# Database helper (MySQL via PyMySQL with SQLite-style placeholder wrapper)
+from db import get_db_connection, init_database as init_mysql_database
 import os
 import uuid
 import uvicorn
@@ -22,8 +23,7 @@ SECRET_KEY = "harvestbot-secret-key-change-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 
-# Database file path
-DB_PATH = "harvestbot_users.db"
+# MySQL configuration is read from environment by db.py
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -68,26 +68,8 @@ class VerifyResponse(BaseModel):
 
 # Database functions
 def init_database():
-    """Initialize SQLite database for user storage"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_login TIMESTAMP
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
-
-def get_db_connection():
-    """Get database connection"""
-    return sqlite3.connect(DB_PATH)
+    """Initialize MySQL schema (delegates to db.py)."""
+    init_mysql_database()
 
 def hash_password(password: str) -> str:
     """Hash password using SHA256"""
@@ -349,11 +331,21 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Detailed health check"""
+    """Detailed health check (MySQL)"""
+    db_status = "unknown"
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchone()
+        db_status = "connected"
+        conn.close()
+    except Exception as e:
+        db_status = f"error: {e}"
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "database": "connected" if os.path.exists(DB_PATH) else "not_initialized",
+        "database": db_status,
         "api_version": "1.0.0"
     }
 
