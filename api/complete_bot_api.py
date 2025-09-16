@@ -20,7 +20,8 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 import jwt
 import hashlib
-import sqlite3
+# Database helper (MySQL via PyMySQL with SQLite-style placeholder wrapper) 
+from db import get_db_connection, init_database as init_mysql_database
 import uuid
 import subprocess
 import signal
@@ -126,7 +127,7 @@ def upsert_memory_for_bot(
 SECRET_KEY = "harvestbot-secret-key-change-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
-DB_PATH = "data/harvestbot_users.db"
+# MySQL configuration is provided via environment variables in .env
 
 def get_error_from_output(stdout_str: str, stderr_str: str, return_code: int) -> str:
     """Extract meaningful error messages from process output"""
@@ -356,77 +357,8 @@ class BotListResponse(BaseModel):
 # =================== DATABASE FUNCTIONS ===================
 
 def init_database():
-    """Initialize SQLite database with all required tables"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # Users table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Bots table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS bots (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            symbol TEXT NOT NULL,
-            network TEXT NOT NULL,
-            exchange_type TEXT NOT NULL,
-            exchange_type_value TEXT,
-            min_time INTEGER NOT NULL,
-            max_time INTEGER NOT NULL,
-            min_spread REAL NOT NULL,
-            max_spread REAL NOT NULL,
-            buy_ratio REAL NOT NULL,
-            wallet_percentage INTEGER NOT NULL,
-            pause_volume INTEGER NOT NULL,
-            api_key1 TEXT,
-            api_secret1 TEXT,
-            api_key2 TEXT,
-            api_secret2 TEXT,
-            status TEXT DEFAULT 'inactive',
-            process_id TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )
-    ''')
-    
-    # Bot memories table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS bot_memories (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            symbol TEXT NOT NULL,
-            network TEXT NOT NULL,
-            exchange_type TEXT NOT NULL,
-            exchange_type_value TEXT,
-            min_time INTEGER NOT NULL,
-            max_time INTEGER NOT NULL,
-            min_spread REAL NOT NULL,
-            max_spread REAL NOT NULL,
-            buy_ratio REAL NOT NULL,
-            wallet_percentage INTEGER NOT NULL,
-            pause_volume INTEGER NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
-
-def get_db_connection():
-    """Get database connection"""
-    return sqlite3.connect(DB_PATH)
+    """Initialize MySQL schema via helper."""
+    init_mysql_database()
 
 # =================== AUTH FUNCTIONS ===================
 

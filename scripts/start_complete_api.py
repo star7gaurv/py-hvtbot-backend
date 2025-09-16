@@ -9,8 +9,9 @@ and bot management endpoints for the crypto_gui React frontend.
 import uvicorn
 import os
 import sys
+from dotenv import load_dotenv
 from pathlib import Path
-
+ 
 # Add parent directory to Python path to access api module
 parent_dir = Path(__file__).parent.parent
 sys.path.append(str(parent_dir))
@@ -19,12 +20,7 @@ def load_env_file():
     """Load environment variables from .env file if it exists"""
     env_file = parent_dir / ".env"
     if env_file.exists():
-        with open(env_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
-                    os.environ[key.strip()] = value.strip()
+        load_dotenv(env_file)
     else:
         print("No .env file found, using default values")
 

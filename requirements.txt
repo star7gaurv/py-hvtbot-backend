@@ -8,7 +8,9 @@ uvicorn[standard]==0.24.0
 python-jose[cryptography]==3.3.0
 python-multipart==0.0.6
 pyjwt==2.8.0
+PyMySQL==1.1.1
+python-dotenv==1.0.1
 
-# Bot Management Dependencies
+# Bot Management Dependencies 
 psutil==5.9.6
 configparser==6.0.0
