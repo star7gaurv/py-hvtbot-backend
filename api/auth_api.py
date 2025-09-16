@@ -17,7 +17,7 @@ from db import get_db_connection, init_database as init_mysql_database
 import os
 import uuid
 import uvicorn
-
+ 
 # Configuration
 SECRET_KEY = "harvestbot-secret-key-change-in-production"
 ALGORITHM = "HS256"

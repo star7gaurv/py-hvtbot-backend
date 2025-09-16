@@ -11,7 +11,7 @@ import os
 import sys
 from dotenv import load_dotenv
 from pathlib import Path
-
+ 
 # Add parent directory to Python path to access api module
 parent_dir = Path(__file__).parent.parent
 sys.path.append(str(parent_dir))

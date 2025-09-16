@@ -9,7 +9,7 @@ Env variables:
   MYSQL_DATABASE (default: python_bot)
   MYSQL_USER (default: root)
   MYSQL_PASSWORD (default: root)
-"""
+""" 
 
 from __future__ import annotations
 
