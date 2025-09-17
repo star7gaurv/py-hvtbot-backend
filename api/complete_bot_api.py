@@ -140,6 +140,8 @@ def get_error_from_output(stdout_str: str, stderr_str: str, return_code: int) ->
         {"pattern": "currency pair nonsupport", "message": "Trading pair not supported by the exchange - check if HVT_USDT is available on LBank"},
         {"pattern": "No such file or directory: 'py'", "message": "Python executable not found - install Python or check PATH"},
         {"pattern": "Bot encountered an error", "message": None},  # Will use the actual error message
+        {"pattern": "Missing dependencies for SOCKS support", "message": "Missing PySocks dependency - install requests[socks] and PySocks"},
+    {"pattern": "Failed to establish a new connection", "message": "Proxy connection refused - disable proxy or set correct SOCKS/HTTP proxy host:port"},
         {"pattern": "Invalid response format from API", "message": "Invalid API response - check API credentials"},
         {"pattern": "KeyError: 'data'", "message": "API response format error - the exchange returned unexpected data format"},
         {"pattern": "Error:", "message": None},  # Will use the actual error message
@@ -360,6 +362,33 @@ def init_database():
     """Initialize MySQL schema via helper."""
     init_mysql_database()
 
+# Helper to safely convert DB datetime fields to datetime objects
+def _to_datetime(value) -> datetime:
+    """Convert a DB value to datetime, handling str and datetime inputs.
+    Falls back to current UTC time if parsing fails or value is None.
+    """
+    try:
+        if value is None:
+            return datetime.utcnow()
+        # If already a datetime instance (e.g., PyMySQL returns datetime), return as-is
+        if isinstance(value, datetime):
+            return value
+        # If string, try ISO first
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except Exception:
+                # Try common MySQL DATETIME format
+                try:
+                    from datetime import timezone
+                    return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    return datetime.utcnow()
+        # Any other type
+        return datetime.utcnow()
+    except Exception:
+        return datetime.utcnow()
+
 # =================== AUTH FUNCTIONS ===================
 
 def hash_password(password: str) -> str:
@@ -509,37 +538,48 @@ def start_bot_process(bot_data: dict) -> tuple[Optional[str], Optional[str]]:
             log_file.write(f"Time: {datetime.utcnow().isoformat()}\n")
             log_file.write("-" * 60 + "\n\n")
         
-        # Determine the best Python executable to use
-        python_executables = ['py', 'python', 'python3']
-        python_cmd = None
-        
-        for cmd in python_executables:
-            try:
-                # Test if the command exists and works
-                result = subprocess.run([cmd, '--version'], 
-                                      capture_output=True, 
-                                      text=True, 
-                                      timeout=5)
-                if result.returncode == 0:
-                    python_cmd = cmd
-                    print(f"Using Python executable: {cmd}")
-                    break
-            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-                continue
-        
+        # Determine the Python executable to use
+        # Priority: env override -> current interpreter -> fallbacks
+        python_cmd = os.getenv("PYTHON_EXECUTABLE")
         if not python_cmd:
-            error_msg = "No suitable Python executable found (tried: py, python, python3)"
+            python_cmd = sys.executable if sys.executable else None
+        if not python_cmd:
+            for cmd in ['py', 'python', 'python3']:
+                try:
+                    result = subprocess.run([cmd, '--version'], capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        python_cmd = cmd
+                        break
+                except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                    continue
+        if not python_cmd:
+            error_msg = "No suitable Python executable found"
             print(error_msg)
             return None, error_msg
+        print(f"Using Python executable: {python_cmd}")
+
+        # Preflight: ensure API credentials exist
+        api_key1 = bot_data.get('api_key1') or bot_data.get('apiKey1')
+        api_secret1 = bot_data.get('api_secret1') or bot_data.get('apiSecret1')
+        api_key2 = bot_data.get('api_key2') or bot_data.get('apiKey2')
+        api_secret2 = bot_data.get('api_secret2') or bot_data.get('apiSecret2')
+        if not all([api_key1, api_secret1, api_key2, api_secret2]):
+            msg = "Missing LBank API credentials (apiKey1/secret1 and apiKey2/secret2 are required)"
+            print(msg)
+            # Still create the log entry for clarity
+            with open(log_path, 'a', encoding='utf-8') as log_file:
+                log_file.write(msg + "\n")
+            return None, msg
         
         # Start the actual bot process using the bot runner
-        process = subprocess.Popen([
-            python_cmd, bot_runner_path, config_path
-        ], 
-        stdout=subprocess.PIPE, 
-        stderr=subprocess.PIPE,
-        cwd=parent_dir,  # Set working directory to the bot project root
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+        # Stream output directly to the per-bot log file to avoid blocking on PIPE buffers
+        log_handle = open(log_path, 'a', encoding='utf-8')
+        process = subprocess.Popen(
+            [python_cmd, bot_runner_path, config_path],
+            stdout=log_handle,
+            stderr=log_handle,
+            cwd=parent_dir,  # Set working directory to the bot project root
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
         )
         
         # Give the process a moment to start
@@ -558,28 +598,31 @@ def start_bot_process(bot_data: dict) -> tuple[Optional[str], Optional[str]]:
                 time.sleep(3)
                 if process.poll() is not None:
                     # Process already crashed
-                    stdout, stderr = process.communicate(timeout=1)
-                    stdout_str = stdout.decode() if stdout else ''
-                    stderr_str = stderr.decode() if stderr else ''
-                    
-                    # Extract meaningful error from output
-                    error_lines = get_error_from_output(stdout_str, stderr_str, process.returncode)
-                    
-                    # Log the error
+                    # Read recent log tail for diagnostics
+                    log_tail = ''
+                    try:
+                        with open(log_path, 'r', encoding='utf-8') as lf:
+                            lf.seek(0, os.SEEK_END)
+                            size = lf.tell()
+                            lf.seek(max(size - 4000, 0))
+                            log_tail = lf.read()
+                    except Exception:
+                        pass
+
+                    # Extract meaningful error from output using the tail
+                    error_lines = get_error_from_output(log_tail, '', process.returncode)
+
+                    # Log the error summary
                     with open(log_path, 'a', encoding='utf-8') as log_file:
                         log_file.write("BOT CRASHED SHORTLY AFTER START\n")
                         log_file.write(f"Error: {error_lines}\n\n")
-                        log_file.write("STDOUT:\n")
-                        log_file.write(stdout_str + "\n\n")
-                        log_file.write("STDERR:\n")
-                        log_file.write(stderr_str + "\n")
-                    
-                    print(f"Bot process crashed shortly after start")
+                        log_file.write("PROCESS OUTPUT TAIL:\n")
+                        log_file.write(log_tail + "\n")
+
+                    print("Bot process crashed shortly after start")
                     print(f"Error: {error_lines}")
-                    print(f"Full stdout: {stdout_str}")
-                    print(f"Full stderr: {stderr_str}")
                     print(f"Log file: {log_path}")
-                    
+
                     return None, error_lines
                 
                 return str(process.pid), None
@@ -595,34 +638,33 @@ def start_bot_process(bot_data: dict) -> tuple[Optional[str], Optional[str]]:
         else:
             # Process crashed immediately - get the actual error
             try:
-                stdout, stderr = process.communicate(timeout=5)
-                stdout_str = stdout.decode() if stdout else ''
-                stderr_str = stderr.decode() if stderr else ''
-                
-                # Extract meaningful error from output
-                error_lines = get_error_from_output(stdout_str, stderr_str, process.returncode)
-                
+                # Read recent log tail for diagnostics
+                log_tail = ''
+                try:
+                    with open(log_path, 'r', encoding='utf-8') as lf:
+                        lf.seek(0, os.SEEK_END)
+                        size = lf.tell()
+                        lf.seek(max(size - 4000, 0))
+                        log_tail = lf.read()
+                except Exception:
+                    pass
+
+                # Extract meaningful error from output (fallback to log tail)
+                error_lines = get_error_from_output(log_tail, '', process.returncode)
+
                 # Log the error
-                bot_id_short = bot_data["id"].split("-")[0]
-                log_dir = "logs"
-                log_path = os.path.join(log_dir, f"bot_{bot_id_short}.log")
-                
                 with open(log_path, 'a', encoding='utf-8') as log_file:
                     log_file.write("BOT CRASHED IMMEDIATELY\n")
                     log_file.write(f"Error: {error_lines}\n\n")
-                    log_file.write("STDOUT:\n")
-                    log_file.write(stdout_str + "\n\n")
-                    log_file.write("STDERR:\n")
-                    log_file.write(stderr_str + "\n")
-                
-                print(f"Bot process crashed immediately")
+                    log_file.write("PROCESS OUTPUT TAIL:\n")
+                    log_file.write(log_tail + "\n")
+
+                print("Bot process crashed immediately")
                 print(f"Error: {error_lines}")
-                print(f"Full stdout: {stdout_str}")
-                print(f"Full stderr: {stderr_str}")
                 print(f"Log file: {log_path}")
-                
+
                 return None, error_lines
-                
+
             except subprocess.TimeoutExpired:
                 process.kill()
                 return None, "Bot process took too long to respond and was terminated"
@@ -699,13 +741,10 @@ def cleanup_bot_config(bot_id: str) -> bool:
             os.path.join("config/bot_configs", f'bot_{bot_id}.ini'),
             os.path.join("configs", f'bot_{bot_id}.ini')
         ]
-        
-        success = False
         for config_path in config_paths:
             if os.path.exists(config_path):
                 os.remove(config_path)
                 print(f"Cleaned up config file: {config_path}")
-                success = True
         
         return True  # Return success even if no files found to clean
     except Exception as e:
@@ -725,11 +764,13 @@ def check_bot_process_status(bot_id: str, process_id: str) -> str:
                 # Additional check: make sure it's actually our python bot process
                 try:
                     cmd_line = process.cmdline()
-                    if len(cmd_line) >= 3 and 'python' in cmd_line[0].lower() and 'bot_runner.py' in cmd_line[1]:
-                        # It's our bot process
+                    cmd_lower = [c.lower() for c in cmd_line]
+                    # Consider various python launchers and positions of script path
+                    is_bot = any('bot_runner.py' in c for c in cmd_lower)
+                    if is_bot:
                         return "active"
                     else:
-                        print(f"Process {pid} exists but is not a bot process: {cmd_line}")
+                        print(f"Process {pid} exists but does not appear to be our bot: {cmd_line}")
                         return "error"
                 except:
                     # If we can't check command line, assume it's running
@@ -917,8 +958,8 @@ async def get_user_bots(current_user: dict = Depends(get_current_user)):
                 walletPercentage=bot[11],
                 pauseVolume=bot[12],
                 status=bot[13],
-                createdAt=datetime.fromisoformat(bot[14]) if bot[14] else datetime.utcnow(),
-                updatedAt=datetime.fromisoformat(bot[15]) if bot[15] else datetime.utcnow()
+                createdAt=_to_datetime(bot[14]),
+                updatedAt=_to_datetime(bot[15])
             ))
         
         return {"success": True, "data": bot_list}
@@ -981,77 +1022,70 @@ async def create_bot(bot_data: BotCreate, current_user: dict = Depends(get_curre
             bot_data.apiKey2 and bot_data.apiSecret2
         )
         
-        # For demo bots or bots with API credentials, try to start immediately
-        try:
-            # Create bot data dict for start_bot_process
-            bot_dict = {
-                'id': bot_id,
-                'name': bot_data.name,
-                'symbol': bot_data.symbol,
-                'network': bot_data.network,
-                'exchangeType': bot_data.exchangeType,
-                'minTime': bot_data.minTime,
-                'maxTime': bot_data.maxTime,
-                'minSpread': bot_data.minSpread,
-                'maxSpread': bot_data.maxSpread,
-                'buyRatio': bot_data.buyRatio,
-                'walletPercentage': bot_data.walletPercentage,
-                'pauseVolume': bot_data.pauseVolume,
-                'apiKey1': bot_data.apiKey1 or '',
-                'apiSecret1': bot_data.apiSecret1 or '',
-                'apiKey2': bot_data.apiKey2 or '',
-                'apiSecret2': bot_data.apiSecret2 or '',
-                'user_id': current_user['id']
-            }
-            
-            print(f"Attempting to start bot {bot_id}...")
-            process_id, error_message = start_bot_process(bot_dict)
-            
-            if process_id:
-                initial_status = "active"
-                start_message = f"Bot started successfully with process ID: {process_id}"
+        # Only attempt to start if credentials are present
+        if has_api_credentials:
+            try:
+                # Create bot data dict for start_bot_process
+                bot_dict = {
+                    'id': bot_id,
+                    'name': bot_data.name,
+                    'symbol': bot_data.symbol,
+                    'network': bot_data.network,
+                    'exchangeType': bot_data.exchangeType,
+                    'minTime': bot_data.minTime,
+                    'maxTime': bot_data.maxTime,
+                    'minSpread': bot_data.minSpread,
+                    'maxSpread': bot_data.maxSpread,
+                    'buyRatio': bot_data.buyRatio,
+                    'walletPercentage': bot_data.walletPercentage,
+                    'pauseVolume': bot_data.pauseVolume,
+                    'apiKey1': bot_data.apiKey1 or '',
+                    'apiSecret1': bot_data.apiSecret1 or '',
+                    'apiKey2': bot_data.apiKey2 or '',
+                    'apiSecret2': bot_data.apiSecret2 or '',
+                    'user_id': current_user['id']
+                }
+
+                print(f"Attempting to start bot {bot_id}...")
+                process_id, error_message = start_bot_process(bot_dict)
+
+                if process_id:
+                    initial_status = "active"
+                    start_message = f"Bot started successfully with process ID: {process_id}"
+                    print(start_message)
+                    # Update the database with the new status and process_id
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "UPDATE bots SET status = ?, process_id = ? WHERE id = ?",
+                        (initial_status, process_id, bot_id)
+                    )
+                    conn.commit()
+                    conn.close()
+                else:
+                    initial_status = "error"
+                    start_message = f"Failed to start bot: {error_message or 'Unknown error'}"
+                    print(start_message)
+                    # Update DB to error
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE bots SET status = ? WHERE id = ?", (initial_status, bot_id))
+                    conn.commit()
+                    conn.close()
+
+            except Exception as e:
+                start_message = f"Failed to auto-start bot: {e}"
+                error_message = str(e)
                 print(start_message)
-                
-                # Update the database with the new status and process_id
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE bots SET status = ?, process_id = ? WHERE id = ?",
-                    (initial_status, process_id, bot_id)
-                )
-                conn.commit()
-                conn.close()
-            else:
                 initial_status = "error"
-                start_message = f"Failed to start bot: {error_message or 'Unknown error'}"
-                print(start_message)
-                
-                # Update the database with error status
                 conn = get_db_connection()
                 cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE bots SET status = ? WHERE id = ?",
-                    (initial_status, bot_id)
-                )
+                cursor.execute("UPDATE bots SET status = ? WHERE id = ?", (initial_status, bot_id))
                 conn.commit()
                 conn.close()
-                
-        except Exception as e:
-            start_message = f"Failed to auto-start bot: {e}"
-            error_message = str(e)
-            print(start_message)
-            # If start fails, mark as error
-            initial_status = "error"
-            
-            # Update the database with error status
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE bots SET status = ? WHERE id = ?",
-                (initial_status, bot_id)
-            )
-            conn.commit()
-            conn.close()
+        else:
+            # Keep as inactive until user provides keys and starts
+            initial_status = "inactive"
         
         bot_response = BotResponse(
             id=bot_id,
@@ -1304,8 +1338,8 @@ async def get_bot(bot_id: str, current_user: dict = Depends(get_current_user)):
             walletPercentage=bot[11],
             pauseVolume=bot[12],
             status=bot[13],
-            createdAt=datetime.fromisoformat(bot[14]) if bot[14] else datetime.utcnow(),
-            updatedAt=datetime.fromisoformat(bot[15]) if bot[15] else datetime.utcnow()
+            createdAt=_to_datetime(bot[14]),
+            updatedAt=_to_datetime(bot[15])
         )
         
     except HTTPException:
@@ -1416,32 +1450,12 @@ async def update_bot_status(bot_id: str, status_data: BotStatusUpdate, current_u
         
         if status_data.status == "active":
             if new_process_id:
-                # Verify bot process is actually running
-                is_running = check_bot_process_status(bot_id, new_process_id) == "active"
-                
-                # Wait a moment and check again to catch immediate crashes
-                if is_running:
-                    time.sleep(5)  # Wait 5 seconds to allow any immediate crashes to happen
-                    is_running = check_bot_process_status(bot_id, new_process_id) == "active"
-                
-                if is_running:
-                    response_data["message"] = f"Bot started successfully with process ID: {new_process_id}"
-                    response_data["process_status"] = "running"
-                    response_data["actual_status"] = "active"
-                    response_data["is_running"] = True
-                else:
-                    # The process started but crashed immediately
-                    response_data["message"] = f"Bot started but crashed immediately"
-                    response_data["process_status"] = "crashed"
-                    response_data["actual_status"] = "error"
-                    response_data["is_running"] = False
-                    response_data["error"] = error_message or "Unknown error - bot process terminated"
-                    # Update the database to reflect actual status
-                    conn = get_db_connection()
-                    conn.execute("UPDATE bots SET status = ? WHERE id = ?", ("error", bot_id))
-                    conn.commit()
-                    conn.close()
-                    bot_response.status = "error"  # Update the response object as well
+                # Return quickly to avoid frontend timeout; detailed verification can be polled via /process_status
+                response_data["message"] = f"Bot start requested (PID: {new_process_id})"
+                response_data["process_status"] = "starting"
+                response_data["actual_status"] = "active"
+                response_data["is_running"] = True
+                response_data["process_id"] = new_process_id
             else:
                 response_data["message"] = f"Bot failed to start: {error_message or 'Unknown error'}"
                 response_data["process_status"] = "failed"
@@ -1562,8 +1576,8 @@ async def update_bot(bot_id: str, bot_data: BotUpdate, current_user: dict = Depe
             walletPercentage=bot[11],
             pauseVolume=bot[12],
             status=bot[13],
-            createdAt=datetime.fromisoformat(bot[14]) if bot[14] else datetime.utcnow(),
-            updatedAt=datetime.fromisoformat(bot[15]) if bot[15] else datetime.utcnow()
+            createdAt=_to_datetime(bot[14]),
+            updatedAt=_to_datetime(bot[15])
         )
 
         # Upsert memory snapshot to reflect latest configuration
@@ -1723,39 +1737,18 @@ async def start_bot(bot_id: str, current_user: dict = Depends(get_current_user))
         }
         
         if new_process_id:
-            # Wait a moment to allow for immediate crashes
-            time.sleep(5)
-            
-            # Check if it's actually running
-            is_running = check_bot_process_status(bot_id, new_process_id) == "active"
-            
-            if is_running:
-                # Update status in DB
-                cursor.execute(
-                    "UPDATE bots SET status = ?, process_id = ?, updated_at = ? WHERE id = ?",
-                    ("active", new_process_id, datetime.utcnow().isoformat(), bot_id)
-                )
-                conn.commit()
-                
-                response["message"] = f"Bot started successfully with process ID: {new_process_id}"
-                response["process_id"] = new_process_id
-                response["process_status"] = "running"
-                response["actual_status"] = "active"
-                response["is_running"] = True
-            else:
-                # Bot crashed immediately
-                cursor.execute(
-                    "UPDATE bots SET status = ?, updated_at = ? WHERE id = ?",
-                    ("error", datetime.utcnow().isoformat(), bot_id)
-                )
-                conn.commit()
-                
-                response["success"] = False
-                response["message"] = "Bot started but crashed immediately"
-                response["error"] = error_message or "Unknown error - bot process terminated"
-                response["process_status"] = "crashed"
-                response["actual_status"] = "error"
-                response["is_running"] = False
+            # Return immediately; frontend can poll /process_status for real-time state
+            cursor.execute(
+                "UPDATE bots SET status = ?, process_id = ?, updated_at = ? WHERE id = ?",
+                ("active", new_process_id, datetime.utcnow().isoformat(), bot_id)
+            )
+            conn.commit()
+
+            response["message"] = f"Bot start requested (PID: {new_process_id})"
+            response["process_id"] = new_process_id
+            response["process_status"] = "starting"
+            response["actual_status"] = "active"
+            response["is_running"] = True
         else:
             # Failed to start
             cursor.execute(
