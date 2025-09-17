@@ -34,11 +34,14 @@ class VolumeBot:
         basicdataMan=bd.BaseConfigMan(self.account1_api_key, self.account1_secret_key)
         self.marketMan = mm.MarketMan(self.account1_api_key, self.account1_secret_key)
 
-        # Set trading pair - append _usdt if not already present
-        if '_' not in _trading_pair:
-            self.trading_pair = f'{_trading_pair}_usdt'
-        else:
-            self.trading_pair = _trading_pair
+        # Set trading pair from input and normalize
+        # - if missing, default to hvt_usdt
+        # - append _usdt if base provided without quote
+        # - lower-case for API consistency
+        incoming_pair = _trading_pair or 'hvt_usdt'
+        if '_' not in incoming_pair:
+            incoming_pair = f'{incoming_pair}_usdt'
+        self.trading_pair = incoming_pair.lower()
 
         ####get accuracy info######
         data = basicdataMan.getAccuracyInfo()
@@ -116,11 +119,11 @@ class VolumeBot:
         
 
         
-        # Set default values in case we don't find the trading pair
+    # Set default values in case we don't find the trading pair
         self.quantity_accuracy = 2.0  # Default to 2 decimal places
         self.price_accuracy = 4.0     # Default to 4 decimal places
         self.min_transaction_quantity = 0.01  # Default minimum transaction
-        self.trading_pair = 'hvt_usdt'  # Default trading pair
+    # NOTE: Do not override self.trading_pair here; use the symbol provided/normalized above
 
         found_symbol = False
         try:
