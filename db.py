@@ -147,6 +147,8 @@ def init_database() -> None:
             api_secret2 TEXT NULL,
             status VARCHAR(16) DEFAULT 'inactive',
             process_id VARCHAR(64) NULL,
+            started_at DATETIME NULL,
+            uptime_seconds BIGINT NOT NULL DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             INDEX idx_bots_user_id (user_id),
@@ -155,6 +157,46 @@ def init_database() -> None:
         )
         '''
     )
+
+    # Backfill schema changes for existing installations using INFORMATION_SCHEMA checks
+    try:
+        # Helper to add a column only if it doesn't exist (compatible with MySQL/MariaDB versions)
+        def _ensure_column(table: str, column: str, add_column_sql: str) -> None:
+            try:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM information_schema.columns
+                    WHERE table_schema = ? AND table_name = ? AND column_name = ?
+                    """,
+                    (MYSQL_DATABASE, table, column),
+                )
+                row = cur.fetchone()
+                exists = (row[0] if row else 0) > 0
+            except Exception as e:
+                # If introspection fails, attempt to add and let DB decide
+                print(f"[db] Warning: column existence check failed for {table}.{column}: {e}")
+                exists = False
+
+            if not exists:
+                try:
+                    cur.execute(add_column_sql)
+                    print(f"[db] Added missing column {table}.{column}")
+                except Exception as e:
+                    # If another process added it in the meantime or any error occurs, log and continue
+                    print(f"[db] Warning: could not add column {table}.{column}: {e}")
+
+        _ensure_column(
+            table="bots",
+            column="started_at",
+            add_column_sql="ALTER TABLE bots ADD COLUMN started_at DATETIME NULL",
+        )
+        _ensure_column(
+            table="bots",
+            column="uptime_seconds",
+            add_column_sql="ALTER TABLE bots ADD COLUMN uptime_seconds BIGINT NOT NULL DEFAULT 0",
+        )
+    except Exception as e:
+        print(f"[db] Warning: schema backfill failed: {e}")
 
     # Bot memories
     cur.execute(
