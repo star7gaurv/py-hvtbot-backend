@@ -314,6 +314,9 @@ class BotResponse(BaseModel):
     status: str
     createdAt: datetime
     updatedAt: datetime
+    startedAt: Optional[datetime] = None
+    uptime: Optional[str] = None
+    uptimeSeconds: Optional[int] = None
 
 # Memory Models
 class BotMemoryCreate(BotBase):
@@ -346,6 +349,11 @@ class DashboardStats(BaseModel):
     pausedBots: int
     errorBots: int
     totalMemories: int
+    # Uptime fields as formatted HH:MM:SS strings
+    systemUptime: Optional[str] = None
+    activeBotsUptime: Optional[str] = None
+    dexBotsUptime: Optional[str] = None
+    cexBotsUptime: Optional[str] = None
 
 class MessageResponse(BaseModel):
     message: str
@@ -388,6 +396,16 @@ def _to_datetime(value) -> datetime:
         return datetime.utcnow()
     except Exception:
         return datetime.utcnow()
+
+def _seconds_to_hms(total_seconds: int) -> str:
+    try:
+        total_seconds = max(0, int(total_seconds))
+    except Exception:
+        total_seconds = 0
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 # =================== AUTH FUNCTIONS ===================
 
@@ -931,36 +949,60 @@ async def get_user_bots(current_user: dict = Depends(get_current_user)):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, name, symbol, network, exchange_type, exchange_type_value,
                    min_time, max_time, min_spread, max_spread, buy_ratio,
-                   wallet_percentage, pause_volume, status, created_at, updated_at
+                   wallet_percentage, pause_volume, status, started_at, uptime_seconds,
+                   created_at, updated_at
             FROM bots WHERE user_id = ?
-        """, (current_user['id'],))
+            """,
+            (current_user['id'],),
+        )
         
         bots = cursor.fetchall()
         conn.close()
         
         bot_list = []
+        now = datetime.utcnow()
         for bot in bots:
-            bot_list.append(BotResponse(
-                id=bot[0],
-                name=bot[1],
-                symbol=bot[2],
-                network=bot[3],
-                exchangeType=bot[4],
-                exchangeTypeValue=bot[5],
-                minTime=bot[6],
-                maxTime=bot[7],
-                minSpread=bot[8],
-                maxSpread=bot[9],
-                buyRatio=bot[10],
-                walletPercentage=bot[11],
-                pauseVolume=bot[12],
-                status=bot[13],
-                createdAt=_to_datetime(bot[14]),
-                updatedAt=_to_datetime(bot[15])
-            ))
+            started_at = bot[14] if len(bot) > 14 else None
+            uptime_seconds = bot[15] if len(bot) > 15 else 0
+            if started_at:
+                try:
+                    started_dt = _to_datetime(started_at)
+                    if bot[13] == 'active':
+                        uptime_seconds_calc = int(uptime_seconds or 0) + max(0, int((now - started_dt).total_seconds()))
+                    else:
+                        uptime_seconds_calc = int(uptime_seconds or 0)
+                except Exception:
+                    uptime_seconds_calc = int(uptime_seconds or 0)
+            else:
+                uptime_seconds_calc = int(uptime_seconds or 0)
+
+            bot_list.append(
+                BotResponse(
+                    id=bot[0],
+                    name=bot[1],
+                    symbol=bot[2],
+                    network=bot[3],
+                    exchangeType=bot[4],
+                    exchangeTypeValue=bot[5],
+                    minTime=bot[6],
+                    maxTime=bot[7],
+                    minSpread=bot[8],
+                    maxSpread=bot[9],
+                    buyRatio=bot[10],
+                    walletPercentage=bot[11],
+                    pauseVolume=bot[12],
+                    status=bot[13],
+                    startedAt=_to_datetime(started_at) if started_at else None,
+                    uptime=_seconds_to_hms(uptime_seconds_calc),
+                    uptimeSeconds=int(uptime_seconds_calc),
+                    createdAt=_to_datetime(bot[16]),
+                    updatedAt=_to_datetime(bot[17]),
+                )
+            )
         
         return {"success": True, "data": bot_list}
         
@@ -1287,15 +1329,47 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
         cursor.execute("SELECT COUNT(*) FROM bot_memories WHERE user_id = ?", (current_user['id'],))
         total_memories = cursor.fetchone()[0]
         
+        # Uptime aggregations
+        cursor.execute(
+            "SELECT status, exchange_type, started_at, uptime_seconds FROM bots WHERE user_id = ?",
+            (current_user['id'],),
+        )
+        rows = cursor.fetchall()
+        now = datetime.utcnow()
+        total_uptime = 0
+        active_uptime = 0
+        dex_uptime = 0
+        cex_uptime = 0
+        for status, exchange_type, started_at, uptime_seconds in rows:
+            prev = int(uptime_seconds or 0)
+            add = 0
+            if status == 'active' and started_at:
+                try:
+                    add = max(0, int((now - _to_datetime(started_at)).total_seconds()))
+                except Exception:
+                    add = 0
+            # system uptime uses total across all bots (including inactive accumulated)
+            total_uptime += prev + add
+            if status == 'active':
+                active_uptime += prev + add
+                if exchange_type == 'DEX':
+                    dex_uptime += prev + add
+                elif exchange_type == 'CEX':
+                    cex_uptime += prev + add
+
         conn.close()
-        
+
         return DashboardStats(
             totalBots=total_bots,
             activeBots=status_counts.get('active', 0),
             inactiveBots=status_counts.get('inactive', 0),
             pausedBots=status_counts.get('paused', 0),
             errorBots=status_counts.get('error', 0),
-            totalMemories=total_memories
+            totalMemories=total_memories,
+            systemUptime=_seconds_to_hms(total_uptime),
+            activeBotsUptime=_seconds_to_hms(active_uptime),
+            dexBotsUptime=_seconds_to_hms(dex_uptime),
+            cexBotsUptime=_seconds_to_hms(cex_uptime),
         )
         
     except Exception as e:
@@ -1310,12 +1384,16 @@ async def get_bot(bot_id: str, current_user: dict = Depends(get_current_user)):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, name, symbol, network, exchange_type, exchange_type_value,
                    min_time, max_time, min_spread, max_spread, buy_ratio,
-                   wallet_percentage, pause_volume, status, created_at, updated_at
+                   wallet_percentage, pause_volume, status, started_at, uptime_seconds,
+                   created_at, updated_at
             FROM bots WHERE id = ? AND user_id = ?
-        """, (bot_id, current_user['id']))
+            """,
+            (bot_id, current_user['id']),
+        )
         
         bot = cursor.fetchone()
         conn.close()
@@ -1323,6 +1401,14 @@ async def get_bot(bot_id: str, current_user: dict = Depends(get_current_user)):
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
         
+        now = datetime.utcnow()
+        started_at = bot[14]
+        uptime_seconds = int(bot[15] or 0)
+        if started_at and bot[13] == 'active':
+            try:
+                uptime_seconds += max(0, int((now - _to_datetime(started_at)).total_seconds()))
+            except Exception:
+                pass
         return BotResponse(
             id=bot[0],
             name=bot[1],
@@ -1338,8 +1424,11 @@ async def get_bot(bot_id: str, current_user: dict = Depends(get_current_user)):
             walletPercentage=bot[11],
             pauseVolume=bot[12],
             status=bot[13],
-            createdAt=_to_datetime(bot[14]),
-            updatedAt=_to_datetime(bot[15])
+            startedAt=_to_datetime(started_at) if started_at else None,
+            uptime=_seconds_to_hms(uptime_seconds),
+            uptimeSeconds=int(uptime_seconds),
+            createdAt=_to_datetime(bot[16]),
+            updatedAt=_to_datetime(bot[17])
         )
         
     except HTTPException:
@@ -1353,28 +1442,39 @@ async def update_bot_status(bot_id: str, status_data: BotStatusUpdate, current_u
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Get current bot data
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, name, symbol, network, exchange_type, exchange_type_value,
                    min_time, max_time, min_spread, max_spread, buy_ratio,
                    wallet_percentage, pause_volume, status, process_id,
                    api_key1, api_secret1, api_key2, api_secret2, user_id
             FROM bots WHERE id = ? AND user_id = ?
-        """, (bot_id, current_user['id']))
-        
+            """,
+            (bot_id, current_user['id']),
+        )
+
         bot = cursor.fetchone()
         if not bot:
             conn.close()
             raise HTTPException(status_code=404, detail="Bot not found")
-        
+
         old_status = bot[13]
         process_id = bot[14]
-        
-        # Handle process management
+
+        # Fetch started_at and uptime_seconds
+        cursor.execute(
+            "SELECT started_at, uptime_seconds FROM bots WHERE id = ? AND user_id = ?",
+            (bot_id, current_user['id']),
+        )
+        sr = cursor.fetchone()
+        prev_started_at = sr[0] if sr else None
+        prev_uptime_seconds = int((sr[1] if sr else 0) or 0)
+
         new_process_id = process_id
         error_message = None
-        
+
         if status_data.status == "active" and old_status != "active":
             # Ensure memory snapshot is up to date before starting
             try:
@@ -1407,26 +1507,48 @@ async def update_bot_status(bot_id: str, status_data: BotStatusUpdate, current_u
                 'api_key2': bot[17], 'api_secret2': bot[18], 'user_id': bot[19]
             }
             new_process_id, error_message = start_bot_process(bot_data)
-            
-            # If failed to start, set status to error
             if not new_process_id:
                 status_data.status = "error"
-                
-        elif status_data.status in ["inactive", "paused"] and old_status == "active":
+
+        elif status_data.status in ["inactive", "paused", "error"] and old_status == "active":
             # Stop the bot process
             if process_id:
                 stop_bot_process(process_id)
             new_process_id = None
-        
-        # Update bot status
-        cursor.execute("""
-            UPDATE bots SET status = ?, process_id = ?, updated_at = ?
+            # Accumulate uptime from the previous started_at
+            try:
+                if prev_started_at:
+                    started_dt = _to_datetime(prev_started_at)
+                    elapsed = max(0, int((datetime.utcnow() - started_dt).total_seconds()))
+                    prev_uptime_seconds += elapsed
+            except Exception:
+                pass
+
+        # Prepare started_at
+        started_at_val: Optional[str] = None
+        if status_data.status == 'active':
+            started_at_val = datetime.utcnow().isoformat()
+
+        # Update DB
+        cursor.execute(
+            """
+            UPDATE bots SET status = ?, process_id = ?, started_at = ?, uptime_seconds = ?, updated_at = ?
             WHERE id = ? AND user_id = ?
-        """, (status_data.status, new_process_id, datetime.utcnow().isoformat(), bot_id, current_user['id']))
-        
+            """,
+            (
+                status_data.status,
+                new_process_id,
+                started_at_val,
+                prev_uptime_seconds,
+                datetime.utcnow().isoformat(),
+                bot_id,
+                current_user['id'],
+            ),
+        )
+
         conn.commit()
         conn.close()
-        
+
         bot_response = BotResponse(
             id=bot[0],
             name=bot[1],
@@ -1442,40 +1564,49 @@ async def update_bot_status(bot_id: str, status_data: BotStatusUpdate, current_u
             walletPercentage=bot[11],
             pauseVolume=bot[12],
             status=status_data.status,
+            startedAt=_to_datetime(started_at_val) if started_at_val else None,
+            uptime=_seconds_to_hms(prev_uptime_seconds),
             createdAt=datetime.utcnow(),
-            updatedAt=datetime.utcnow()
+            updatedAt=datetime.utcnow(),
+            uptimeSeconds=int(prev_uptime_seconds),
         )
-        
-        response_data = {"success": True, "data": bot_response}
-        
+
+        response_data: Dict[str, Any] = {"success": True, "data": bot_response}
         if status_data.status == "active":
             if new_process_id:
-                # Return quickly to avoid frontend timeout; detailed verification can be polled via /process_status
-                response_data["message"] = f"Bot start requested (PID: {new_process_id})"
-                response_data["process_status"] = "starting"
-                response_data["actual_status"] = "active"
-                response_data["is_running"] = True
-                response_data["process_id"] = new_process_id
+                response_data.update({
+                    "message": f"Bot start requested (PID: {new_process_id})",
+                    "process_status": "starting",
+                    "actual_status": "active",
+                    "is_running": True,
+                    "process_id": new_process_id,
+                })
             else:
-                response_data["message"] = f"Bot failed to start: {error_message or 'Unknown error'}"
-                response_data["process_status"] = "failed"
-                response_data["actual_status"] = "error"
-                response_data["is_running"] = False
-                response_data["error"] = error_message
+                response_data.update({
+                    "message": f"Bot failed to start: {error_message or 'Unknown error'}",
+                    "process_status": "failed",
+                    "actual_status": "error",
+                    "is_running": False,
+                    "error": error_message,
+                })
         elif status_data.status == "error" and error_message:
-            response_data["error"] = error_message
-            response_data["message"] = f"Bot failed to start: {error_message}"
-            response_data["process_status"] = "failed"
-            response_data["actual_status"] = "error"
-            response_data["is_running"] = False
+            response_data.update({
+                "error": error_message,
+                "message": f"Bot failed to start: {error_message}",
+                "process_status": "failed",
+                "actual_status": "error",
+                "is_running": False,
+            })
         else:
-            response_data["message"] = f"Bot status updated to {status_data.status} successfully"
-            response_data["process_status"] = "inactive"
-            response_data["actual_status"] = status_data.status
-            response_data["is_running"] = False
-        
+            response_data.update({
+                "message": f"Bot status updated to {status_data.status} successfully",
+                "process_status": "inactive",
+                "actual_status": status_data.status,
+                "is_running": False,
+            })
+
         return response_data
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1653,24 +1784,27 @@ async def start_bot(bot_id: str, current_user: dict = Depends(get_current_user))
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Get current bot data
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, name, symbol, network, exchange_type, exchange_type_value,
                    min_time, max_time, min_spread, max_spread, buy_ratio,
                    wallet_percentage, pause_volume, status, process_id,
                    api_key1, api_secret1, api_key2, api_secret2, user_id
             FROM bots WHERE id = ? AND user_id = ?
-        """, (bot_id, current_user['id']))
-        
+            """,
+            (bot_id, current_user['id']),
+        )
+
         bot = cursor.fetchone()
         if not bot:
             conn.close()
             raise HTTPException(status_code=404, detail="Bot not found")
-        
+
         old_status = bot[13]
         process_id = bot[14]
-        
+
         # First, check if the bot is already running
         if process_id and check_bot_process_status(bot_id, process_id) == "active":
             conn.close()
@@ -1681,16 +1815,15 @@ async def start_bot(bot_id: str, current_user: dict = Depends(get_current_user))
                     "name": bot[1],
                     "symbol": bot[2],
                     "status": "active",
-                    "process_id": process_id
+                    "process_id": process_id,
                 },
                 "message": "Bot is already running",
                 "process_status": "running",
                 "actual_status": "active",
-                "is_running": True
+                "is_running": True,
             }
-        
-        # If bot was previously marked as active but process is not running,
-        # or if we're explicitly starting the bot
+
+        # Build bot data for starting
         bot_data = {
             'id': bot[0], 'name': bot[1], 'symbol': bot[2], 'network': bot[3],
             'exchange_type': bot[4], 'exchange_type_value': bot[5],
@@ -1699,10 +1832,10 @@ async def start_bot(bot_id: str, current_user: dict = Depends(get_current_user))
             'pause_volume': bot[12], 'api_key1': bot[15], 'api_secret1': bot[16],
             'api_key2': bot[17], 'api_secret2': bot[18], 'user_id': bot[19]
         }
-        
+
         # Clean up any old configs in wrong location
         cleanup_bot_config(bot_id)
-        
+
         # Ensure a memory snapshot exists/updated before starting
         try:
             upsert_memory_for_bot(
@@ -1726,47 +1859,47 @@ async def start_bot(bot_id: str, current_user: dict = Depends(get_current_user))
 
         # Start the bot process
         new_process_id, error_message = start_bot_process(bot_data)
-        
-        response = {
+
+        response: Dict[str, Any] = {
             "success": True if new_process_id else False,
-            "data": {
-                "id": bot[0],
-                "name": bot[1],
-                "symbol": bot[2]
-            }
+            "data": {"id": bot[0], "name": bot[1], "symbol": bot[2]},
         }
-        
+
         if new_process_id:
             # Return immediately; frontend can poll /process_status for real-time state
             cursor.execute(
-                "UPDATE bots SET status = ?, process_id = ?, updated_at = ? WHERE id = ?",
-                ("active", new_process_id, datetime.utcnow().isoformat(), bot_id)
+                "UPDATE bots SET status = ?, process_id = ?, started_at = ?, updated_at = ? WHERE id = ?",
+                ("active", new_process_id, datetime.utcnow().isoformat(), datetime.utcnow().isoformat(), bot_id),
             )
             conn.commit()
 
-            response["message"] = f"Bot start requested (PID: {new_process_id})"
-            response["process_id"] = new_process_id
-            response["process_status"] = "starting"
-            response["actual_status"] = "active"
-            response["is_running"] = True
+            response.update({
+                "message": f"Bot start requested (PID: {new_process_id})",
+                "process_id": new_process_id,
+                "process_status": "starting",
+                "actual_status": "active",
+                "is_running": True,
+            })
         else:
             # Failed to start
             cursor.execute(
                 "UPDATE bots SET status = ?, updated_at = ? WHERE id = ?",
-                ("error", datetime.utcnow().isoformat(), bot_id)
+                ("error", datetime.utcnow().isoformat(), bot_id),
             )
             conn.commit()
-            
-            response["success"] = False
-            response["message"] = f"Failed to start bot: {error_message or 'Unknown error'}"
-            response["error"] = error_message
-            response["process_status"] = "failed"
-            response["actual_status"] = "error"
-            response["is_running"] = False
-        
+
+            response.update({
+                "success": False,
+                "message": f"Failed to start bot: {error_message or 'Unknown error'}",
+                "error": error_message,
+                "process_status": "failed",
+                "actual_status": "error",
+                "is_running": False,
+            })
+
         conn.close()
         return response
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1778,35 +1911,48 @@ async def get_bot_process_status(bot_id: str, current_user: dict = Depends(get_c
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id, name, status, process_id
+
+        cursor.execute(
+            """
+            SELECT id, name, status, process_id, started_at, uptime_seconds
             FROM bots WHERE id = ? AND user_id = ?
-        """, (bot_id, current_user['id']))
-        
+            """,
+            (bot_id, current_user['id']),
+        )
+
         bot = cursor.fetchone()
         conn.close()
-        
+
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
-        
+
         db_status = bot[2]
         process_id = bot[3]
-        
+        prev_started_at = bot[4]
+        prev_uptime_seconds = int((bot[5] or 0))
+
         # Get the actual process status
         actual_status = check_bot_process_status(bot_id, process_id)
-        
+
         # If DB says active but process is not running, update DB
         if db_status == "active" and actual_status != "active":
+            # accumulate uptime if we had a start time
+            try:
+                if prev_started_at:
+                    elapsed = max(0, int((datetime.utcnow() - _to_datetime(prev_started_at)).total_seconds()))
+                    prev_uptime_seconds += elapsed
+            except Exception:
+                pass
             conn = get_db_connection()
-            conn.execute(
-                "UPDATE bots SET status = ?, updated_at = ? WHERE id = ?",
-                ("error", datetime.utcnow().isoformat(), bot_id)
+            cursor2 = conn.cursor()
+            cursor2.execute(
+                "UPDATE bots SET status = ?, started_at = ?, uptime_seconds = ?, updated_at = ? WHERE id = ?",
+                ("error", None, prev_uptime_seconds, datetime.utcnow().isoformat(), bot_id),
             )
             conn.commit()
             conn.close()
             db_status = "error"
-        
+
         return {
             "success": True,
             "data": {
@@ -1815,8 +1961,8 @@ async def get_bot_process_status(bot_id: str, current_user: dict = Depends(get_c
                 "db_status": db_status,
                 "actual_status": actual_status,
                 "process_id": process_id,
-                "is_running": actual_status == "active"
-            }
+                "is_running": actual_status == "active",
+            },
         }
     except HTTPException:
         raise
