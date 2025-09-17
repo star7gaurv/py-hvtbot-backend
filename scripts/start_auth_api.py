@@ -47,15 +47,15 @@ def main():
         return
     
     # Check dependencies
-    print("🔍 Checking dependencies...")
+    print(" Checking dependencies...")
     if not check_dependencies():
         return
     
     print("All dependencies are installed")
     print("\nStarting HarvestBot Authentication API...")
-    print("📍 Backend will be available at: http://localhost:5000")
-    print("📱 React frontend should use: http://localhost:5000/api")
-    print("📚 API docs will be at: http://localhost:5000/docs")
+    print(" Backend will be available at: http://localhost:5000")
+    print(" React frontend should use: http://localhost:5000/api")
+    print(" API docs will be at: http://localhost:5000/docs")
     print("\nStarting server (Press Ctrl+C to stop)...")
     print("-" * 50)
     

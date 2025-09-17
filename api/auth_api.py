@@ -366,12 +366,12 @@ async def api_root():
 def init_db_startup():
     """Initialize database when the app starts"""
     init_database()
-    print("🚀 HarvestBot Authentication API started")
-    print("📍 Authentication endpoints available at:")
+    print(" HarvestBot Authentication API started")
+    print(" Authentication endpoints available at:")
     print("   - POST http://localhost:5001/api/auth/login")
     print("   - POST http://localhost:5001/api/auth/signup") 
     print("   - GET  http://localhost:5001/api/auth/verify")
-    print("📚 API Documentation: http://localhost:5001/docs")
+    print(" API Documentation: http://localhost:5001/docs")
 
 if __name__ == "__main__":
     print("Starting HarvestBot Authentication API...")
