@@ -476,7 +476,7 @@ secret_key2 = {api_secret2}
 signmethod = hmacSHA256
 
 [TRADING]
-symbol = {(bot_data.get('symbol', '') or '').lower()}
+symbol = {(bot_data.get('symbol', '') or '')}
 network = {bot_data.get('network', 'LBank')}
 exchange_type = {bot_data.get('exchange_type', bot_data.get('exchangeType', 'CEX'))}
 exchange_type_value = {bot_data.get('exchange_type_value', bot_data.get('exchangeTypeValue', ''))}

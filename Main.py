@@ -35,13 +35,14 @@ class VolumeBot:
         self.marketMan = mm.MarketMan(self.account1_api_key, self.account1_secret_key)
 
         # Set trading pair from input and normalize
-        # - if missing, default to hvt_usdt
-        # - append _usdt if base provided without quote
+        # - require explicit symbol like base_quote (e.g., hvt_usdt)
         # - lower-case for API consistency
-        incoming_pair = _trading_pair or 'hvt_usdt'
-        if '_' not in incoming_pair:
-            incoming_pair = f'{incoming_pair}_usdt'
-        self.trading_pair = incoming_pair.lower()
+        if not _trading_pair:
+            raise ValueError("Missing trading pair. Provide symbol like 'hvt_usdt'.")
+        incoming_pair = _trading_pair.strip().lower()
+        if '_' not in incoming_pair or incoming_pair.startswith('_') or incoming_pair.endswith('_'):
+            raise ValueError(f"Invalid trading pair '{_trading_pair}'. Expected format 'base_quote', e.g., 'hvt_usdt'.")
+        self.trading_pair = incoming_pair
 
         ####get accuracy info######
         data = basicdataMan.getAccuracyInfo()
@@ -119,7 +120,7 @@ class VolumeBot:
         
 
         
-    # Set default values in case we don't find the trading pair
+    # Set default values; do not override the provided trading pair
         self.quantity_accuracy = 2.0  # Default to 2 decimal places
         self.price_accuracy = 4.0     # Default to 4 decimal places
         self.min_transaction_quantity = 0.01  # Default minimum transaction
@@ -139,7 +140,7 @@ class VolumeBot:
             print(f"Error parsing accuracy info: {e}")
         
         if not found_symbol:
-            print(f"WARNING: Trading pair '{self.trading_pair}' not found in accuracy info. Using default values.")
+            raise ValueError(f"Trading pair '{self.trading_pair}' not found in exchange accuracy info.")
             
         print("Quantity accuracy:", self.quantity_accuracy)
         print("Price accuracy:", self.price_accuracy)

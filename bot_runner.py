@@ -71,9 +71,12 @@ def main():
         api_key2 = config.get('DEFAULT', 'api_key2', fallback='')
         secret_key2 = config.get('DEFAULT', 'secret_key2', fallback='')
 
-        # Extract trading parameters; keep provided symbol, fallback only if missing
-        raw_symbol = config.get('TRADING', 'symbol', fallback='hvt_usdt')
-        symbol = (raw_symbol or 'hvt_usdt').lower()
+        # Extract trading parameters; require explicit symbol
+        raw_symbol = config.get('TRADING', 'symbol', fallback='')
+        symbol = (raw_symbol or '').strip()
+        if not symbol:
+            raise ValueError("Missing TRADING.symbol in config. Provide symbol like 'hvt_usdt'.")
+        symbol = symbol.lower()
         network = config.get('TRADING', 'network', fallback='LBank')
         exchange_type = config.get('TRADING', 'exchange_type', fallback='CEX')
         min_time = config.getint('TRADING', 'min_time', fallback=60)
