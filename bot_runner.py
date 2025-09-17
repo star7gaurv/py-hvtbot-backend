@@ -59,20 +59,24 @@ def main():
         # Read configuration
         config = configparser.ConfigParser()
         config.read(config_file)
-        
+
         # Extract bot configuration
         bot_name = config.get('BOT', 'name', fallback='Unnamed Bot')
         bot_id = config.get('BOT', 'bot_id', fallback='unknown')
         user_id = config.get('BOT', 'user_id', fallback='unknown')
-        
+
         # Extract API credentials
         api_key1 = config.get('DEFAULT', 'api_key', fallback='')
         secret_key1 = config.get('DEFAULT', 'secret_key', fallback='')
         api_key2 = config.get('DEFAULT', 'api_key2', fallback='')
         secret_key2 = config.get('DEFAULT', 'secret_key2', fallback='')
-        
-        # Extract trading parameters
-        symbol = config.get('TRADING', 'symbol', fallback='hvt_usdt')
+
+        # Extract trading parameters; require explicit symbol
+        raw_symbol = config.get('TRADING', 'symbol', fallback='')
+        symbol = (raw_symbol or '').strip()
+        if not symbol:
+            raise ValueError("Missing TRADING.symbol in config. Provide symbol like 'hvt_usdt'.")
+        symbol = symbol.lower()
         network = config.get('TRADING', 'network', fallback='LBank')
         exchange_type = config.get('TRADING', 'exchange_type', fallback='CEX')
         min_time = config.getint('TRADING', 'min_time', fallback=60)
