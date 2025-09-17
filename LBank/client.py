@@ -3,6 +3,7 @@
 # file name : ExcuHttp
 
 import datetime
+import os
 import hashlib
 import random
 import string
@@ -31,6 +32,15 @@ class client:
 
         self.util=Util.Util()
 
+        # Use a dedicated requests Session and, by default, ignore system proxy
+        # env to avoid unintended SOCKS routing that can cause connection refused.
+        # Set HBOT_TRUST_ENV=1 (or HBOT_USE_PROXY=1) to honor HTTP(S)_PROXY/ALL_PROXY.
+        self.session = req.Session()
+        use_env_proxy = os.environ.get("HBOT_TRUST_ENV") == "1" or os.environ.get("HBOT_USE_PROXY") == "1"
+        if not use_env_proxy:
+            self.session.trust_env = False
+            self.session.proxies = {}
+
 
     def excuteRequestsRSA(self, par, url, method, privKey):
         '''execute requests with RSA signature'''
@@ -58,9 +68,9 @@ class client:
         # print('get response with header {h} and param {p} by {url}'.format(h=header,p=par,url=urlstr))
 
         if method == 'post':
-            res = req.post( url=urlstr, data=par, headers=header )
+            res = self.session.post(url=urlstr, data=par, headers=header, timeout=30)
         else:
-            res = req.get( url=urlstr, params=par, headers=header )
+            res = self.session.get(url=urlstr, params=par, headers=header, timeout=30)
 
         if res.status_code == 200:
             resp = res.json()
@@ -94,9 +104,9 @@ class client:
         # print( 'get response with header {h} and param {p} by {url}'.format( h=header, p=par, url=urlstr ) )
 
         if method == 'post':
-            res = req.post( url=urlstr, data=par, headers=header )
+            res = self.session.post(url=urlstr, data=par, headers=header, timeout=30)
         else:
-            res = req.get( url=urlstr, params=par, headers=header )
+            res = self.session.get(url=urlstr, params=par, headers=header, timeout=30)
 
         if res.status_code == 200:
             resp = res.json()
