@@ -72,6 +72,11 @@ class CursorWrapper:
     def close(self) -> None:
         self._inner.close()
 
+    @property
+    def rowcount(self) -> int:
+        """Return the number of rows affected by the last execute() operation."""
+        return self._inner.rowcount
+
 
 class ConnectionWrapper:
     def __init__(self, inner):
