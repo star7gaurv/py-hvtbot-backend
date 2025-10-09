@@ -208,8 +208,8 @@ init_database()
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Starting HarvestBot Authentication API...")
-    print("📍 API available at: http://localhost:5000")
-    print("📚 Documentation: http://localhost:5000/docs")
-    print("🔗 React frontend should use: http://localhost:5000/api")
+    print(" Starting HarvestBot Authentication API...")
+    print(" API available at: http://localhost:5000")
+    print(" Documentation: http://localhost:5000/docs")
+    print(" React frontend should use: http://localhost:5000/api")
     uvicorn.run(app, host="0.0.0.0", port=5000)

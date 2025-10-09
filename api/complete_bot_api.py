@@ -1293,9 +1293,11 @@ async def delete_memory(memory_id: str, current_user: dict = Depends(get_current
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute("DELETE FROM bot_memories WHERE id = ? AND user_id = ?", (memory_id, current_user['id']))
+        # Execute delete and store the number of affected rows
+        rows_affected = cursor.execute("DELETE FROM bot_memories WHERE id = ? AND user_id = ?", (memory_id, current_user['id']))
         
-        if cursor.rowcount == 0:
+        if rows_affected == 0:
+            conn.close()
             raise HTTPException(status_code=404, detail="Memory not found")
         
         conn.commit()
@@ -1674,9 +1676,9 @@ async def update_bot(bot_id: str, bot_data: BotUpdate, current_user: dict = Depe
             update_values.extend([bot_id, current_user['id']])
             
             query = f"UPDATE bots SET {', '.join(update_fields)} WHERE id = ? AND user_id = ?"
-            cursor.execute(query, update_values)
+            rows_affected = cursor.execute(query, update_values)
             
-            if cursor.rowcount == 0:
+            if rows_affected == 0:
                 conn.close()
                 raise HTTPException(status_code=404, detail="Bot not found")
         

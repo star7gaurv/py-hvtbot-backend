@@ -254,14 +254,18 @@ class VolumeBot:
                 print("All trading strategies failed, retrying in 30 seconds")
                 scheduler.enter(30, 1, self.place_order, (scheduler,))
                 return
-        
-        # Continue with normal trading logic
-        scheduler.enter(self.random_waittime_gen(), 1, self.place_order, (scheduler,))
-        return
 
+        # Continue with normal trading logic
+        #scheduler.enter(self.random_waittime_gen(), 1, self.place_order, (scheduler,))
+        #return
         # Get account balances
         self.acc1_usdt, self.acc1_hvt, self.acc2_usdt, self.acc2_hvt = self.check_balance()
         self.acc1_usdt = self.round_nearest(self.acc1_usdt, 1/(10**self.price_accuracy))
+        
+        # Main trading logic - Execute trades when spread is acceptable
+        print(f"Spread is within acceptable range, proceeding with trading logic")
+        
+        # Continue with balance calculations and trading logic
         self.acc1_hvt = self.acc1_hvt - self.acc1_hvt%(1/(10**self.quantity_accuracy))
         self.acc2_hvt = self.acc2_hvt - self.acc2_hvt%(1/(10**self.quantity_accuracy))
         print("Acc1 USDT:", self.acc1_usdt)
@@ -379,7 +383,7 @@ class VolumeBot:
                 # Trade closer to ask (selling pressure)
                 mid_price = self.round_nearest(hvt_ask - adjustment, min_price_increment)
                 
-            print(f"🎯 Created artificial trading gap at price: {mid_price}")
+            print(f" Created artificial trading gap at price: {mid_price}")
             return mid_price
         
         # Normal case - there's a gap for trading
@@ -559,7 +563,7 @@ class VolumeBot:
             # Strategy 1: Market taking - trade at existing prices
             if random.random() < 0.5:
                 # Account 1 buys at ask price, Account 2 sells at bid price
-                print(f"📈 Market taking strategy: Buy at {hvt_ask}, Sell at {hvt_bid}")
+                print(f" Market taking strategy: Buy at {hvt_ask}, Sell at {hvt_bid}")
                 
                 if self.last_traded_account == 2:
                     print(self.orderMan1.getCreate_order(symbol=self.trading_pair, type='buy', price=str(hvt_ask), amount=min_quantity, custom_id=''))
@@ -577,7 +581,7 @@ class VolumeBot:
                 new_bid = self.round_nearest(hvt_bid - price_increment, price_increment)
                 new_ask = self.round_nearest(hvt_ask + price_increment, price_increment)
                 
-                print(f"📊 Creating new price levels: New Bid {new_bid}, New Ask {new_ask}")
+                print(f" Creating new price levels: New Bid {new_bid}, New Ask {new_ask}")
                 
                 if self.last_traded_account == 2:
                     # Place orders at new price levels
@@ -591,7 +595,7 @@ class VolumeBot:
                     print(self.orderMan1.getCreate_order(symbol=self.trading_pair, type='sell', price=str(new_ask), amount=min_quantity, custom_id=''))
                     self.last_traded_account = 2
                     
-            print("✅ No-gap trade executed successfully")
+            print("No-gap trade executed successfully")
             return True
             
         except Exception as e:
