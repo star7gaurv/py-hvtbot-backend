@@ -1463,17 +1463,46 @@ async def get_all_bots_error_logs(
                             all_lines = content.split('\n')
                             recent_lines = all_lines[-lines:] if len(all_lines) >= lines else all_lines
                             
-                            # Extract errors from recent lines
+                            # Extract errors and important trading messages from recent lines
                             for line in recent_lines:
                                 if line.strip():
                                     line_lower = line.lower()
-                                    if any(pattern in line_lower for pattern in [
+                                    clean_line = line.strip()
+                                    
+                                    # Skip empty lines and common non-error patterns
+                                    if not clean_line or clean_line.startswith('Bot received signal'):
+                                        continue
+                                    
+                                    # Check for technical error patterns
+                                    has_technical_error = any(pattern in line_lower for pattern in [
                                         'error', 'failed', 'exception', 'traceback', 
                                         'denied', 'nonsupport', 'keyerror', 'timeout',
                                         'connection refused', 'invalid response', 'crashed'
-                                    ]):
-                                        clean_line = line.strip()
-                                        if clean_line and clean_line not in error_logs:
+                                    ])
+                                    
+                                    # Check for trading/business logic issues
+                                    has_trading_issue = any(pattern in line_lower for pattern in [
+                                        "doesn't have enough", 'insufficient', 'please top up',
+                                        'required amount:', 'actual amount:', 'top up amount:',
+                                        'account balance', 'balance too low', 'fund', 'deposit',
+                                        'api key permission denied', 'invalid ip', 'permissions'
+                                    ])
+                                    
+                                    # Check for API response errors (like LBank API permission issues)
+                                    has_api_error = any(pattern in line_lower for pattern in [
+                                        'permission denied', 'invalid ip', 'api key', 
+                                        'result: false', 'error_code', 'invalid response format'
+                                    ])
+                                    
+                                    # For running bots, also capture important operational info
+                                    has_operational_info = is_running and any(pattern in line_lower for pattern in [
+                                        'account', 'balance', 'spread', 'current prices', 'entering order placement',
+                                        'kline data', 'acc1', 'acc2', 'usdt:', 'hvt', 'placing orders', 'done placing'
+                                    ])
+                                    
+                                    # Capture lines that match any of the criteria
+                                    if has_technical_error or has_trading_issue or has_api_error or has_operational_info:
+                                        if clean_line not in error_logs:
                                             error_logs.append(clean_line)
                                             if not last_error:
                                                 last_error = clean_line
@@ -1590,21 +1619,48 @@ async def get_bot_live_error_logs(
                         # Process lines to extract errors using existing function
                         log_content = '\n'.join(recent_lines)
                         
-                        # Use the existing get_error_from_output function to extract errors
+                        # Use enhanced error detection to capture both technical errors and trading issues
                         if log_content.strip():
-                            # Look for error patterns in the log content
+                            # Look for error patterns and important trading messages
                             for line in recent_lines:
                                 if line.strip():
                                     line_lower = line.lower()
-                                    # Check for various error patterns
-                                    if any(pattern in line_lower for pattern in [
+                                    clean_line = line.strip()
+                                    
+                                    # Skip empty lines and common non-error patterns
+                                    if not clean_line or clean_line.startswith('Bot received signal'):
+                                        continue
+                                    
+                                    # Check for technical error patterns
+                                    has_technical_error = any(pattern in line_lower for pattern in [
                                         'error', 'failed', 'exception', 'traceback', 
                                         'denied', 'nonsupport', 'keyerror', 'timeout',
                                         'connection refused', 'invalid response', 'crashed'
-                                    ]):
-                                        # Clean up and add to error logs
-                                        clean_line = line.strip()
-                                        if clean_line and clean_line not in error_logs:
+                                    ])
+                                    
+                                    # Check for trading/business logic issues
+                                    has_trading_issue = any(pattern in line_lower for pattern in [
+                                        "doesn't have enough", 'insufficient', 'please top up',
+                                        'required amount:', 'actual amount:', 'top up amount:',
+                                        'account balance', 'balance too low', 'fund', 'deposit',
+                                        'api key permission denied', 'invalid ip', 'permissions'
+                                    ])
+                                    
+                                    # Check for API response errors (like your LBank API permission issues)
+                                    has_api_error = any(pattern in line_lower for pattern in [
+                                        'permission denied', 'invalid ip', 'api key', 
+                                        'result: false', 'error_code', 'invalid response format'
+                                    ])
+                                    
+                                    # For running bots, also capture important operational info
+                                    has_operational_info = is_running and any(pattern in line_lower for pattern in [
+                                        'account', 'balance', 'spread', 'current prices', 'entering order placement',
+                                        'kline data', 'acc1', 'acc2', 'usdt:', 'hvt', 'placing orders', 'done placing'
+                                    ])
+                                    
+                                    # Capture lines that match any of the criteria
+                                    if has_technical_error or has_trading_issue or has_api_error or has_operational_info:
+                                        if clean_line not in error_logs:
                                             error_logs.append(clean_line)
                                             if not last_error:  # Set first error as last_error
                                                 last_error = clean_line
