@@ -359,6 +359,16 @@ class MessageResponse(BaseModel):
     message: str
     success: bool = True
 
+class BotErrorLogResponse(BaseModel):
+    bot_id: str
+    bot_name: str
+    is_running: bool
+    process_id: Optional[str] = None
+    error_logs: List[str]
+    last_error: Optional[str] = None
+    log_timestamp: str
+    has_errors: bool
+
 # Response wrapper models
 class BotListResponse(BaseModel):
     success: bool = True
@@ -1377,6 +1387,269 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get dashboard stats: {str(e)}")
 
+# =================== ERROR LOGS ENDPOINTS ===================
+
+@app.get("/api/bots/error-logs", response_model=List[BotErrorLogResponse])
+async def get_all_bots_error_logs(
+    lines: int = Query(default=30, description="Number of recent log lines to analyze per bot", ge=1, le=500),
+    only_errors: bool = Query(default=True, description="Return only bots with errors"),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get live error logs from all bots owned by the current user"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Get all bots for the user
+        cursor.execute(
+            """
+            SELECT id, name, status, process_id FROM bots 
+            WHERE user_id = ?
+            ORDER BY updated_at DESC
+            """,
+            (current_user['id'],),
+        )
+
+        bots = cursor.fetchall()
+        conn.close()
+
+        if not bots:
+            return []
+
+        bot_error_logs = []
+        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        log_dir = os.path.join(parent_dir, "logs")
+
+        for bot in bots:
+            bot_id, bot_name, db_status, process_id = bot
+            
+            # Check if bot is actually running
+            actual_status = check_bot_process_status(bot_id, process_id) if process_id else "inactive"
+            is_running = actual_status == "active"
+
+            # Determine log file path
+            bot_id_short = bot_id.split("-")[0]
+            log_path = os.path.join(log_dir, f"bot_{bot_id_short}.log")
+
+            error_logs = []
+            last_error = None
+            log_timestamp = datetime.utcnow().isoformat()
+
+            # If bot is not running, provide status-based error information
+            if not is_running:
+                if db_status == "error" or actual_status == "error":
+                    error_logs.append("Bot process is not running (status: error)")
+                elif db_status == "paused":
+                    error_logs.append("Bot is currently paused")
+                elif db_status == "inactive" or actual_status == "inactive":
+                    error_logs.append("Bot is inactive and not running")
+                else:
+                    error_logs.append(f"Bot process not found (DB status: {db_status}, actual: {actual_status})")
+
+            # Try to read recent log entries if log file exists
+            if os.path.exists(log_path):
+                try:
+                    with open(log_path, 'r', encoding='utf-8') as log_file:
+                        # Read last N lines efficiently
+                        log_file.seek(0, os.SEEK_END)
+                        file_size = log_file.tell()
+                        
+                        if file_size > 0:
+                            # Estimate bytes per line
+                            estimated_bytes = min(lines * 80, file_size)
+                            log_file.seek(max(0, file_size - estimated_bytes))
+                            
+                            content = log_file.read()
+                            all_lines = content.split('\n')
+                            recent_lines = all_lines[-lines:] if len(all_lines) >= lines else all_lines
+                            
+                            # Extract errors from recent lines
+                            for line in recent_lines:
+                                if line.strip():
+                                    line_lower = line.lower()
+                                    if any(pattern in line_lower for pattern in [
+                                        'error', 'failed', 'exception', 'traceback', 
+                                        'denied', 'nonsupport', 'keyerror', 'timeout',
+                                        'connection refused', 'invalid response', 'crashed'
+                                    ]):
+                                        clean_line = line.strip()
+                                        if clean_line and clean_line not in error_logs:
+                                            error_logs.append(clean_line)
+                                            if not last_error:
+                                                last_error = clean_line
+
+                except Exception as e:
+                    error_logs.append(f"Error reading log file: {str(e)}")
+                    last_error = f"Log file access error: {str(e)}"
+
+            # Limit error logs
+            error_logs = error_logs[:10]  # Keep fewer for bulk request
+
+            has_errors = len(error_logs) > 0 and not (len(error_logs) == 1 and "No errors detected" in error_logs[0])
+
+            # Create bot error log response
+            bot_error_response = BotErrorLogResponse(
+                bot_id=bot_id,
+                bot_name=bot_name,
+                is_running=is_running,
+                process_id=process_id,
+                error_logs=error_logs,
+                last_error=last_error,
+                log_timestamp=log_timestamp,
+                has_errors=has_errors
+            )
+
+            # Add to results based on filter
+            if only_errors:
+                if has_errors:
+                    bot_error_logs.append(bot_error_response)
+            else:
+                bot_error_logs.append(bot_error_response)
+
+        return bot_error_logs
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get all bots error logs: {str(e)}")
+
+@app.get("/api/bots/{bot_id}/error-logs", response_model=BotErrorLogResponse)
+async def get_bot_live_error_logs(
+    bot_id: str, 
+    lines: int = Query(default=50, description="Number of recent log lines to analyze", ge=1, le=1000),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get live error logs from a running bot or detect errors if bot is not running"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Get bot information
+        cursor.execute(
+            """
+            SELECT id, name, status, process_id FROM bots 
+            WHERE id = ? AND user_id = ?
+            """,
+            (bot_id, current_user['id']),
+        )
+
+        bot = cursor.fetchone()
+        conn.close()
+
+        if not bot:
+            raise HTTPException(status_code=404, detail="Bot not found")
+
+        bot_name = bot[1]
+        db_status = bot[2]
+        process_id = bot[3]
+
+        # Check if bot is actually running
+        actual_status = check_bot_process_status(bot_id, process_id) if process_id else "inactive"
+        is_running = actual_status == "active"
+
+        # Determine log file path
+        bot_id_short = bot_id.split("-")[0]
+        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        log_dir = os.path.join(parent_dir, "logs")
+        log_path = os.path.join(log_dir, f"bot_{bot_id_short}.log")
+
+        error_logs = []
+        last_error = None
+        log_timestamp = datetime.utcnow().isoformat()
+
+        # If bot is not running, provide status-based error information
+        if not is_running:
+            if db_status == "error" or actual_status == "error":
+                error_logs.append("Bot process is not running (status: error)")
+            elif db_status == "paused":
+                error_logs.append("Bot is currently paused")
+            elif db_status == "inactive" or actual_status == "inactive":
+                error_logs.append("Bot is inactive and not running")
+            else:
+                error_logs.append(f"Bot process not found (DB status: {db_status}, actual: {actual_status})")
+        
+        # Try to read recent log entries if log file exists
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, 'r', encoding='utf-8') as log_file:
+                    # Read last N lines efficiently
+                    log_file.seek(0, os.SEEK_END)
+                    file_size = log_file.tell()
+                    
+                    # For large files, estimate position to start reading from
+                    if file_size > 0:
+                        # Estimate bytes per line (rough estimate)
+                        estimated_bytes = min(lines * 100, file_size)
+                        log_file.seek(max(0, file_size - estimated_bytes))
+                        
+                        # Read and get last N lines
+                        content = log_file.read()
+                        all_lines = content.split('\n')
+                        recent_lines = all_lines[-lines:] if len(all_lines) >= lines else all_lines
+                        
+                        # Process lines to extract errors using existing function
+                        log_content = '\n'.join(recent_lines)
+                        
+                        # Use the existing get_error_from_output function to extract errors
+                        if log_content.strip():
+                            # Look for error patterns in the log content
+                            for line in recent_lines:
+                                if line.strip():
+                                    line_lower = line.lower()
+                                    # Check for various error patterns
+                                    if any(pattern in line_lower for pattern in [
+                                        'error', 'failed', 'exception', 'traceback', 
+                                        'denied', 'nonsupport', 'keyerror', 'timeout',
+                                        'connection refused', 'invalid response', 'crashed'
+                                    ]):
+                                        # Clean up and add to error logs
+                                        clean_line = line.strip()
+                                        if clean_line and clean_line not in error_logs:
+                                            error_logs.append(clean_line)
+                                            if not last_error:  # Set first error as last_error
+                                                last_error = clean_line
+                        
+                        # If no specific errors found but bot is not running, try to get general error
+                        if not error_logs and not is_running and log_content.strip():
+                            # Use the existing function to analyze the log
+                            analyzed_error = get_error_from_output(log_content, '', 1)
+                            if analyzed_error and "Bot process exited with code" not in analyzed_error:
+                                error_logs.append(analyzed_error)
+                                last_error = analyzed_error
+
+            except Exception as e:
+                error_logs.append(f"Error reading log file: {str(e)}")
+                last_error = f"Log file access error: {str(e)}"
+        else:
+            # Log file doesn't exist
+            if not is_running:
+                error_logs.append("Bot log file not found - bot may have never been started")
+            else:
+                error_logs.append("Log file not found but bot appears to be running")
+
+        # If no errors found and bot is running, indicate that
+        if not error_logs and is_running:
+            error_logs.append("No errors detected in recent logs")
+
+        # Limit error logs to prevent response bloat
+        error_logs = error_logs[:20]  # Keep only the 20 most recent errors
+
+        return BotErrorLogResponse(
+            bot_id=bot_id,
+            bot_name=bot_name,
+            is_running=is_running,
+            process_id=process_id,
+            error_logs=error_logs,
+            last_error=last_error,
+            log_timestamp=log_timestamp,
+            has_errors=len(error_logs) > 0 and not (len(error_logs) == 1 and "No errors detected" in error_logs[0])
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get bot error logs: {str(e)}")
+
 # =================== BOT DETAIL ENDPOINTS ===================
 
 @app.get("/api/bots/{bot_id}", response_model=BotResponse)
@@ -1970,6 +2243,8 @@ async def get_bot_process_status(bot_id: str, current_user: dict = Depends(get_c
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get bot process status: {str(e)}")
+
+
 
 if __name__ == "__main__":
     import uvicorn
