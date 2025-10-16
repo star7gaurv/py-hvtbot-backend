@@ -317,24 +317,6 @@ This bot is typically used for:
 
 ---
 
-## 📈 What You'll See
-
-### **On the Exchange:**
-```
-Recent Trades:
-12:34:56 - BUY 800 HVT at $0.01023
-12:35:43 - SELL 1,100 HVT at $0.01019
-12:36:45 - BUY 600 HVT at $0.01021
-12:38:12 - SELL 950 HVT at $0.01020
-```
-
-### **24h Volume:**
-```
-Before bot: $1,200
-After 6 hours: $8,500
-After 12 hours: $17,300
-After 24 hours: $35,000+
-```
 
 ### **Order Book Activity:**
 ```
@@ -352,10 +334,6 @@ Regular price updates
 - Consider exchange trading fees (typically 0.1-0.2% per trade)
 - Budget for potential small losses from fees
 
-### **Market Conditions**
-- Works best with stable price ranges
-- May pause during extreme volatility
-- Adapts to changing spread conditions
 
 ### **Monitoring**
 - Check bot status regularly
@@ -363,43 +341,6 @@ Regular price updates
 - Monitor for any errors or issues
 - Keep API keys secure
 
-### **Legal & Ethical**
-- ⚠️ Wash trading is illegal in many jurisdictions
-- ⚠️ May violate exchange terms of service
-- ⚠️ Could result in account suspension
-- ⚠️ Consult legal advice before use
-
----
-
-## 🚀 Quick Start Summary
-
-1. **Setup**: Configure two LBank accounts with API keys
-2. **Fund**: Add USDT and tokens to both accounts
-3. **Configure**: Set your trading parameters (time, spread, volume)
-4. **Launch**: Start the bot through GUI or command line
-5. **Monitor**: Watch the trading activity begin
-6. **Manage**: Adjust parameters as needed
-
----
-
-## 💬 Common Questions
-
-**Q: Will I lose money?**
-A: The bot trades at mid-prices, so theoretically you break even. However, exchange fees mean small losses over time.
-
-**Q: How much volume can it generate?**
-A: Depends on your wallet percentage and timing settings. Typically $10,000 - $100,000+ per day.
-
-**Q: Can I run it 24/7?**
-A: Yes, but use the volume pause feature to prevent excessive activity.
-
-**Q: What if one account runs out of funds?**
-A: The bot detects this and pauses trading until you add more funds.
-
-**Q: Does it affect the actual token price?**
-A: Since trades happen between your own accounts at mid-prices, it has minimal price impact.
-
----
 
 ## 📞 Bot Status Messages
 
